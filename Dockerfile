@@ -25,7 +25,9 @@ RUN apt-get update && apt-get install -y \
         pcntl \
         bcmath \
         intl \
-    && a2enmod rewrite headers alias \
+    && a2dismod mpm_event mpm_worker || true \
+    && rm -f /etc/apache2/mods-enabled/mpm_event.* /etc/apache2/mods-enabled/mpm_worker.* \
+    && a2enmod mpm_prefork rewrite headers alias \
     && rm -rf /var/lib/apt/lists/*
 
 # Point Apache DocumentRoot to Laravel's public/ directory and enable .htaccess + /storage/app/public alias
@@ -33,7 +35,7 @@ ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
     && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
     && sed -ri -e 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
-    && printf 'Alias /storage/app/public /var/www/html/storage/app/public\n<Directory /var/www/html/storage/app/public>\n    Options FollowSymLinks\n    AllowOverride None\n    Require all granted\n</Directory>\n' \
+    && printf 'ServerName localhost\nAlias /storage/app/public /var/www/html/storage/app/public\n<Directory /var/www/html/storage/app/public>\n    Options FollowSymLinks\n    AllowOverride None\n    Require all granted\n</Directory>\n' \
         > /etc/apache2/conf-available/dtlive-storage.conf \
     && a2enconf dtlive-storage
 
@@ -65,12 +67,13 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-di
 
 EXPOSE 8080
 
-# Bind Railway dynamic $PORT, create storage symlink, and start Apache
+# Ensure single Apache MPM, bind Railway dynamic $PORT idempotently, link storage, and start Apache
 CMD sh -c '\
+    rm -f /etc/apache2/mods-enabled/mpm_event.* /etc/apache2/mods-enabled/mpm_worker.*; \
     PORT_VAL="${PORT:-8080}"; \
-    sed -i "s/Listen 80/Listen ${PORT_VAL}/g" /etc/apache2/ports.conf; \
-    sed -i "s/:80>/:${PORT_VAL}>/g" /etc/apache2/sites-available/000-default.conf; \
-    php artisan storage:link || true; \
+    printf "Listen %s\n" "${PORT_VAL}" > /etc/apache2/ports.conf; \
+    sed -ri "s/<VirtualHost \*:[0-9]+>/<VirtualHost *:${PORT_VAL}>/g" /etc/apache2/sites-available/000-default.conf; \
+    rm -rf public/storage && php artisan storage:link || true; \
     php artisan config:clear || true; \
     chown -R www-data:www-data storage bootstrap/cache; \
     exec apache2-foreground'
