@@ -1,5 +1,8 @@
 FROM php:8.2-apache
 
+ENV COMPOSER_ALLOW_SUPERUSER=1
+ENV COMPOSER_PROCESS_TIMEOUT=600
+
 # Install system dependencies & PHP extensions required by Laravel 10 + DTLive
 RUN apt-get update && apt-get install -y \
     git \
@@ -22,14 +25,17 @@ RUN apt-get update && apt-get install -y \
         pcntl \
         bcmath \
         intl \
-    && a2enmod rewrite headers \
+    && a2enmod rewrite headers alias \
     && rm -rf /var/lib/apt/lists/*
 
-# Point Apache DocumentRoot to Laravel's public/ directory and enable .htaccess
+# Point Apache DocumentRoot to Laravel's public/ directory and enable .htaccess + /storage/app/public alias
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
     && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
-    && sed -ri -e 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
+    && sed -ri -e 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
+    && printf 'Alias /storage/app/public /var/www/html/storage/app/public\n<Directory /var/www/html/storage/app/public>\n    Options FollowSymLinks\n    AllowOverride None\n    Require all granted\n</Directory>\n' \
+        > /etc/apache2/conf-available/dtlive-storage.conf \
+    && a2enconf dtlive-storage
 
 # Increase PHP upload limits for OTT media assets
 RUN printf "upload_max_filesize=200M\npost_max_size=200M\nmemory_limit=512M\nmax_execution_time=300\n" \
@@ -40,11 +46,7 @@ WORKDIR /var/www/html
 # Copy Laravel admin_panel source
 COPY admin_panel/ /var/www/html/
 
-# Install Composer dependencies
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
-
-# Ensure required Laravel storage & cache directories exist and are writable
+# Create required Laravel directories and .env BEFORE composer install / package:discover
 RUN mkdir -p \
         storage/app/public \
         storage/framework/cache/data \
@@ -53,8 +55,13 @@ RUN mkdir -p \
         storage/logs \
         bootstrap/cache \
     && touch .env \
-    && chown -R www-data:www-data storage bootstrap/cache .env \
     && chmod -R 775 storage bootstrap/cache
+
+# Install Composer dependencies
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-scripts \
+    && php artisan package:discover --ansi \
+    && chown -R www-data:www-data storage bootstrap/cache .env
 
 EXPOSE 8080
 
