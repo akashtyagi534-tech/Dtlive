@@ -75,5 +75,6 @@ CMD sh -c '\
     sed -ri "s/<VirtualHost \*:[0-9]+>/<VirtualHost *:${PORT_VAL}>/g" /etc/apache2/sites-available/000-default.conf; \
     rm -rf public/storage && php artisan storage:link || true; \
     php artisan config:clear || true; \
+    php /var/www/html/db/auto_init_db.php || true; \
     chown -R www-data:www-data storage bootstrap/cache; \
     exec apache2-foreground'
