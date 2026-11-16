@@ -60,7 +60,7 @@ RUN mkdir -p \
 # Install Composer dependencies
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-scripts \
-    && php artisan package:discover --ansi \
+    && APP_URL=http://localhost php artisan package:discover --ansi \
     && chown -R www-data:www-data storage bootstrap/cache .env
 
 EXPOSE 8080
