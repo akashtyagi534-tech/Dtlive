@@ -10,5 +10,7 @@ metadata.json
 admin_panel/vendor
 admin_panel/node_modules
 admin_panel/.env
+appcode
+.github
 .git
 .env*

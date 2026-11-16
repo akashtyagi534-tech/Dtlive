@@ -1,0 +1,103 @@
+name: Build Split Android APKs (arm64-v8a & armeabi-v7a)
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Optional override for API Base URL (ends with /api/)"
+        required: false
+        default: ""
+      api_token:
+        description: "Optional override for API Token"
+        required: false
+        default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - "appcode/**"
+      - ".github/workflows/build-apk.yml"
+
+jobs:
+  build-apks:
+    name: Build 2 Split APKs (No Universal APK)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Flutter 3.41.0
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.0"
+          channel: "stable"
+          cache: true
+
+      - name: Accept Android SDK Licenses
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          if [ -n "$SDK_ROOT" ]; then
+            CMDLINE_BIN=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1)
+            if [ -n "$CMDLINE_BIN" ]; then
+              yes | "$CMDLINE_BIN" --licenses >/dev/null 2>&1 || true
+            fi
+          fi
+
+      - name: Apply Optional API Overrides
+        if: ${{ inputs.api_base_url != '' || inputs.api_token != '' }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re
+          path = "appcode/lib/utils/constant.dart"
+          text = open(path, "r", encoding="utf-8").read()
+          base_url = os.environ.get("INPUT_BASE_URL", "").strip()
+          api_token = os.environ.get("INPUT_API_TOKEN", "").strip()
+          if base_url:
+              text = re.sub(r"static String baseUrl =\s*'[^']*';", f"static String baseUrl = '{base_url}';", text)
+          if api_token:
+              text = re.sub(r"static String apiToken =\s*'[^']*';", f"static String apiToken = '{api_token}';", text)
+          open(path, "w", encoding="utf-8").write(text)
+          PY
+        env:
+          INPUT_BASE_URL: ${{ inputs.api_base_url }}
+          INPUT_API_TOKEN: ${{ inputs.api_token }}
+
+      - name: Install Flutter Dependencies
+        working-directory: appcode
+        run: flutter pub get
+
+      - name: Build 2 Split APKs (arm64-v8a & armeabi-v7a)
+        working-directory: appcode
+        run: |
+          flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
+
+      - name: Prepare Separate APK Files
+        shell: bash
+        run: |
+          mkdir -p dist-apks/arm64-v8a dist-apks/armeabi-v7a
+          cp appcode/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist-apks/arm64-v8a/DTLive-arm64-v8a-release.apk
+          cp appcode/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist-apks/armeabi-v7a/DTLive-armeabi-v7a-release.apk
+          ls -lh dist-apks/*/*.apk
+
+      - name: Upload APK 1 (arm64-v8a - 64-bit Phones)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DTLive-arm64-v8a-apk
+          path: dist-apks/arm64-v8a/DTLive-arm64-v8a-release.apk
+          retention-days: 30
+
+      - name: Upload APK 2 (armeabi-v7a - 32-bit Phones & TV)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DTLive-armeabi-v7a-apk
+          path: dist-apks/armeabi-v7a/DTLive-armeabi-v7a-release.apk
+          retention-days: 30
