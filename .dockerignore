@@ -1,0 +1,14 @@
+node_modules
+dist
+src
+index.html
+package.json
+tsconfig.json
+vite.config.ts
+bun.lock
+metadata.json
+admin_panel/vendor
+admin_panel/node_modules
+admin_panel/.env
+.git
+.env*

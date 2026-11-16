@@ -1,0 +1,6 @@
+{
+  "name": "DTLive Railway Deploy",
+  "description": "Railway deployment configuration and environment setup for DTLive v2.1 Laravel Admin Panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
