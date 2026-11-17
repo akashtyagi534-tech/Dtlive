@@ -90,5 +90,9 @@ Route::group(['middleware' => 'apipurchasecode'], function () {
 
         // Coupon System — v2.1
         Route::post('validate_coupon', [HomeController::class, 'validate_coupon']);
+
+        // Universal Quick Video Link Importer
+        Route::post('add_video_by_link', [HomeController::class, 'add_video_by_link']);
     });
 });
+

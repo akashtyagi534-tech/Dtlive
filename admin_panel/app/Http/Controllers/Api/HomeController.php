@@ -4200,4 +4200,62 @@ class HomeController extends Controller
             Shorts::where('id', $videoId)->update(['avg_rating' => $avg, 'total_review' => $count]);
         }
     }
+
+    /**
+     * Quick import 1 or multiple video links (Moj, YouTube, Reels, Direct MP4/M3U8)
+     * directly into AT Player catalog & Home screen.
+     */
+    public function add_video_by_link(Request $request)
+    {
+        try {
+            $rawLinks = trim((string) ($request->input('links') ?? $request->input('url') ?? ''));
+            if ($rawLinks === '') {
+                return $this->common->API_Response(400, 'Please enter at least one valid video link.');
+            }
+
+            $customTitle = trim((string) ($request->input('title') ?? ''));
+            $categoryId  = (int) ($request->input('category_id') ?? 0);
+            $alsoShorts  = (int) ($request->input('also_shorts') ?? 1) === 1;
+
+            $extractor = new \App\Services\LinkVideoExtractor();
+            $urls = $extractor->parseUrls($rawLinks);
+            if (empty($urls)) {
+                return $this->common->API_Response(400, 'No valid HTTP/HTTPS links found. Please check your link.');
+            }
+
+            $urls = array_slice($urls, 0, 20);
+            $imported = [];
+            $failed   = [];
+
+            foreach ($urls as $idx => $url) {
+                $titleForItem = (count($urls) === 1 && $customTitle !== '') ? $customTitle : null;
+                $res = $extractor->importLinkToLibrary($url, $titleForItem, $categoryId > 0 ? $categoryId : null, $alsoShorts);
+                if (!empty($res['success']) && !empty($res['video'])) {
+                    $imported[] = $res['video'];
+                } else {
+                    $failed[] = [
+                        'url'   => $url,
+                        'error' => $res['error'] ?? 'Could not extract video from link.',
+                    ];
+                }
+            }
+
+            if (empty($imported)) {
+                $firstErr = $failed[0]['error'] ?? 'Failed to import video link.';
+                return $this->common->API_Response(400, $firstErr);
+            }
+
+            return response()->json([
+                'status'       => 200,
+                'message'      => count($imported) . ' video(s) added successfully!',
+                'added_count'  => count($imported),
+                'failed_count' => count($failed),
+                'failed'       => $failed,
+                'result'       => $imported,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['status' => 400, 'errors' => $e->getMessage()]);
+        }
+    }
 }
+

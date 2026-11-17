@@ -1684,6 +1684,48 @@ class ApiService {
   }
 
   /* ========================== Wallet ========================== */
+
+  // add_video_by_link API (Quick Link Import: Single or Multiple links)
+  Future<Map<String, dynamic>> addVideoByLink({
+    required String links,
+    String? title,
+    int categoryId = 0,
+    bool alsoShorts = true,
+  }) async {
+    try {
+      Response response = await dio.post(
+        "add_video_by_link",
+        options: Options(
+          sendTimeout: const Duration(seconds: 45),
+          receiveTimeout: const Duration(seconds: 60),
+          headers: <String, dynamic>{
+            'Content-Type': 'application/json',
+            'Api-Token': Constant.apiToken,
+          },
+        ),
+        data: {
+          'links': links,
+          if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+          if (categoryId > 0) 'category_id': categoryId,
+          'also_shorts': alsoShorts ? 1 : 0,
+        },
+      );
+      if (response.data is Map<String, dynamic>) {
+        return Map<String, dynamic>.from(response.data);
+      }
+      return {'status': 400, 'message': 'Unexpected server response.'};
+    } on DioException catch (e) {
+      if (e.response?.data is Map<String, dynamic>) {
+        return Map<String, dynamic>.from(e.response!.data);
+      }
+      return {
+        'status': 400,
+        'message': e.message ?? 'Network error while importing video link.',
+      };
+    } catch (e) {
+      return {'status': 400, 'message': e.toString()};
+    }
+  }
 }
 
 /* ========================== Download Videos ========================== */

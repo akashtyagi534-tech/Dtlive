@@ -92,6 +92,9 @@ class PushNotificationService {
       await FirebaseAuth.instance.signOut();
 
       webServerClientId = await sharedPre.read(Constant.googleClientIdKey);
+      if (webServerClientId == null || webServerClientId.isEmpty) {
+        webServerClientId = Constant.defaultGoogleWebClientId;
+      }
       printLog("_getDeviceToken webServerClientId ===> $webServerClientId");
       if (kIsWeb) {
         try {
@@ -102,7 +105,6 @@ class PushNotificationService {
       } else {
         try {
           await googleSignIn.initialize(
-            clientId: webServerClientId,
             serverClientId: webServerClientId,
           );
         } catch (e) {
@@ -111,7 +113,7 @@ class PushNotificationService {
       }
 
       await googleSignIn.signOut();
-    } on Exception catch (e) {
+    } catch (e) {
       printLog("_onLogoutDelete Firebase-Gmail Exception =====> $e");
     }
     await Utils.setUserId(null);

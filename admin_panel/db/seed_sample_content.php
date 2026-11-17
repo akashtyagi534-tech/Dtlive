@@ -55,7 +55,82 @@ try {
         exit(0);
     }
 
-    // Seed only once when no videos exist yet
+    // Always ensure AT Player branding, Google web_client_id, Latest Added Links section, and Moj video
+    $mysqli->query("UPDATE `tbl_general_setting` SET `value` = 'AT Player' WHERE `key` = 'app_name' AND (`value` = '' OR `value` = 'DTLive' OR `value` IS NULL)");
+    $mysqli->query("UPDATE `tbl_general_setting` SET `value` = '946063364931-709266s19taopeuqpb2k16e72b5aar4h.apps.googleusercontent.com' WHERE `key` = 'web_client_id' AND (`value` = '' OR `value` IS NULL)");
+
+    $resSecCheck = $mysqli->query("SELECT id FROM `tbl_home_section` WHERE `title` = 'Latest Added Links' LIMIT 1");
+    if ($resSecCheck && $resSecCheck->num_rows === 0) {
+        $mTypeRes = $mysqli->query("SELECT id FROM `tbl_type` WHERE `type` = 1 LIMIT 1");
+        $mTypeId = ($mTypeRes && $mTypeRes->num_rows > 0) ? (int) $mTypeRes->fetch_assoc()['id'] : 1;
+        $mysqli->query("INSERT INTO `tbl_home_section` (`section_type`, `is_home_screen`, `video_type`, `sub_video_type`, `type_id`, `title`, `short_title`, `screen_layout`, `content_ids`, `category_id`, `language_id`, `channel_id`, `order_by_upload`, `order_by_view`, `premium_video`, `no_of_content`, `view_all`, `is_title`, `sort_order`, `status`) VALUES (0, 1, 1, 0, {$mTypeId}, 'Latest Added Links', 'Recently Imported Videos', 'portrait', '', 0, 0, 0, 2, 0, 0, 20, 1, 1, 0, 1)");
+    }
+
+    // Seed initial Moj video if not present yet
+    $resMoj = $mysqli->query("SELECT id FROM `tbl_video` WHERE `video_320` LIKE '%moj_3972316268%' LIMIT 1");
+    if ($resMoj && $resMoj->num_rows === 0) {
+        $mojMp4 = 'https://cdn-moj-g.sharechat.com/bd5223f_xmk/contents/moj_3972316268/attributed/11VdO3yDJ2SEXRxe6OOGun0pexr1LkSN2Lbg.mp4?referrer=pwa-moj-service&tenant=moj';
+        $mojTitle = 'Glow And Lovely on Moj';
+        $mojThumb = 'action_poster.jpg';
+
+        if (function_exists('curl_init')) {
+            $ch = curl_init('https://mojapp.in/@glow_and_lovely/video/3972316268?referrer=VbDk6YT-1KM04XN');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT => 12,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+            ]);
+            $html = curl_exec($ch);
+            curl_close($ch);
+            if (is_string($html) && $html !== '') {
+                if (preg_match('#<meta[^>]+property=["\']og:video["\'][^>]+content=["\']([^"\']+)["\']#i', $html, $vm)) {
+                    $mojMp4 = html_entity_decode($vm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                }
+                if (preg_match('#<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']#i', $html, $tm)) {
+                    $mojTitle = html_entity_decode($tm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                }
+                if (preg_match('#<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']#i', $html, $im)) {
+                    $imgUrl = html_entity_decode($im[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $ch2 = curl_init($imgUrl);
+                    curl_setopt_array($ch2, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_FOLLOWLOCATION => true,
+                        CURLOPT_TIMEOUT => 10,
+                    ]);
+                    $imgBytes = curl_exec($ch2);
+                    curl_close($ch2);
+                    if (is_string($imgBytes) && strlen($imgBytes) > 500) {
+                        $contentDir = $publicStorageDir . '/content';
+                        if (!is_dir($contentDir)) {
+                            @mkdir($contentDir, 0775, true);
+                        }
+                        if (@file_put_contents($contentDir . '/moj_3972316268.png', $imgBytes) !== false) {
+                            $mojThumb = 'moj_3972316268.png';
+                        }
+                    }
+                }
+            }
+        }
+
+        $mTypeRes2 = $mysqli->query("SELECT id FROM `tbl_type` WHERE `type` = 1 LIMIT 1");
+        $mTypeId2 = ($mTypeRes2 && $mTypeRes2->num_rows > 0) ? (int) $mTypeRes2->fetch_assoc()['id'] : 1;
+        $sTypeRes2 = $mysqli->query("SELECT id FROM `tbl_type` WHERE `type` = 8 LIMIT 1");
+        $sTypeId2 = ($sTypeRes2 && $sTypeRes2->num_rows > 0) ? (int) $sTypeRes2->fetch_assoc()['id'] : 0;
+
+        $stmtMoj = $mysqli->prepare("INSERT INTO `tbl_video` (`type_id`, `video_type`, `channel_id`, `producer_id`, `category_id`, `language_id`, `cast_id`, `name`, `storage_type`, `thumbnail`, `landscape`, `description`, `video_storage_type`, `video_upload_type`, `video_320`, `video_480`, `video_720`, `video_1080`, `video_extension`, `video_duration`, `trailer_storage_type`, `trailer_type`, `trailer_url`, `subtitle_storage_type`, `subtitle_type`, `subtitle_lang_1`, `subtitle_1`, `subtitle_lang_2`, `subtitle_2`, `subtitle_lang_3`, `subtitle_3`, `release_date`, `is_premium`, `is_title`, `is_download`, `is_comment`, `is_like`, `is_rent`, `price`, `rent_day`, `avg_rating`, `total_review`, `total_view`, `total_like`, `status`) VALUES (?, 1, 1, 0, '1', '1', '', ?, 1, ?, ?, 'Imported from Moj video link', 1, 'external', ?, ?, ?, ?, 'mp4', 30000, 1, 'external', ?, 1, 'external', '', '', '', '', '', '', ?, 0, 1, 0, 1, 1, 0, 0, 0, 4.9, 1, 100, 25, 1)");
+        $today = date('Y-m-d');
+        $stmtMoj->bind_param('isssssssss', $mTypeId2, $mojTitle, $mojThumb, $mojThumb, $mojMp4, $mojMp4, $mojMp4, $mojMp4, $mojMp4, $today);
+        $stmtMoj->execute();
+        $stmtMoj->close();
+
+        $stmtMojShort = $mysqli->prepare("INSERT INTO `tbl_shorts` (`type_id`, `video_type`, `producer_id`, `category_id`, `language_id`, `cast_id`, `name`, `storage_type`, `thumbnail`, `trailer_storage_type`, `trailer_type`, `trailer_url`, `description`, `is_title`, `is_comment`, `is_like`, `total_view`, `total_like`, `avg_rating`, `total_review`, `status`) VALUES (?, 8, 0, '1', '1', '', ?, 1, ?, 1, 'external', ?, 'Imported from Moj video link', 1, 1, 1, 100, 25, 4.9, 1, 1)");
+        $stmtMojShort->bind_param('isss', $sTypeId2, $mojTitle, $mojThumb, $mojMp4);
+        $stmtMojShort->execute();
+        $stmtMojShort->close();
+    }
+
+    // Seed base sample catalog only once when no videos exist yet
     $resCount = $mysqli->query('SELECT COUNT(*) AS cnt FROM `tbl_video`');
     $rowCount = $resCount ? $resCount->fetch_assoc() : ['cnt' => 0];
     if ((int) ($rowCount['cnt'] ?? 0) > 0) {

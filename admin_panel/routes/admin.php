@@ -113,6 +113,9 @@ Route::group(['middleware' => 'installation'], function () {
         Route::post('video/getdata/{id}', [VideoController::class, 'GetData'])->name('video.getdata');
         Route::get('videostatus', [VideoController::class, 'changeStatus'])->name('video.status');
         Route::post('video/releases', [VideoController::class, 'videoReleases'])->name('video.releases');
+        // Quick Add by Link (Single or Bulk)
+        Route::get('quick-link', [VideoController::class, 'quickLinkForm'])->name('quicklink.index');
+        Route::post('quick-link/import', [VideoController::class, 'quickLinkImport'])->name('quicklink.import');
         // TVShow
         Route::get('tvshow/{type_id}', [TVShowController::class, 'index'])->name('tvshow.index');
         Route::get('tvshow/add/{type_id}', [TVShowController::class, 'create'])->name('tvshow.add');

@@ -1,6 +1,6 @@
 {
-    "name": "yourappname",
-    "short_name": "yourappname",
+    "name": "AT Player",
+    "short_name": "AT Player",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

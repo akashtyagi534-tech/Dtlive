@@ -37,6 +37,7 @@ import '../widget/myimage.dart';
 import '../widget/mynetworkimg.dart';
 import '../widget/mytext.dart';
 import '../widget/myusernetworkimg.dart';
+import '../widget/add_link_sheet.dart';
 
 class MySpace extends StatefulWidget {
   const MySpace({super.key});
@@ -373,53 +374,94 @@ class MySpaceState extends State<MySpace> with RouteAware {
                 ),
               ),
               if (Constant.userIsKid == false)
-                InkWell(
-                  borderRadius: BorderRadius.circular(Dimens.cardRadius),
-                  onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) {
-                          return const Settings();
-                        },
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => showAddLinkSheet(context),
+                      child: Container(
+                        height: 28,
+                        margin: const EdgeInsets.only(right: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: colorPrimary.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: colorPrimary.withValues(alpha: 0.7),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.add_link_rounded,
+                              color: colorPrimary,
+                              size: 15,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              "Add Link",
+                              style: TextStyle(
+                                color: colorPrimary,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Container(
-                          height: 15,
-                          width: 15,
-                          alignment: Alignment.centerLeft,
-                          child: MyImage(
-                            imagePath: "ic_setting.png",
-                            fit: BoxFit.contain,
-                            color: titleTextColor,
-                          ),
-                        ),
-                        Container(
-                          alignment: Alignment.centerLeft,
-                          margin: const EdgeInsets.only(left: 5),
-                          child: MyText(
-                            color: titleTextColor,
-                            text: "help_setting",
-                            multilanguage: true,
-                            textalign: TextAlign.start,
-                            fontsizeNormal: 13,
-                            fontsizeWeb: 15,
-                            fontweight: FontWeight.w500,
-                            maxline: 1,
-                            overflow: TextOverflow.ellipsis,
-                            fontstyle: FontStyle.normal,
-                          ),
-                        ),
-                      ],
                     ),
-                  ),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(Dimens.cardRadius),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) {
+                              return const Settings();
+                            },
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Container(
+                              height: 15,
+                              width: 15,
+                              alignment: Alignment.centerLeft,
+                              child: MyImage(
+                                imagePath: "ic_setting.png",
+                                fit: BoxFit.contain,
+                                color: titleTextColor,
+                              ),
+                            ),
+                            Container(
+                              alignment: Alignment.centerLeft,
+                              margin: const EdgeInsets.only(left: 5),
+                              child: MyText(
+                                color: titleTextColor,
+                                text: "help_setting",
+                                multilanguage: true,
+                                textalign: TextAlign.start,
+                                fontsizeNormal: 13,
+                                fontsizeWeb: 15,
+                                fontweight: FontWeight.w500,
+                                maxline: 1,
+                                overflow: TextOverflow.ellipsis,
+                                fontstyle: FontStyle.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
             ],
           ),

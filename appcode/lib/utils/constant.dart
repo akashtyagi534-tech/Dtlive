@@ -7,7 +7,9 @@ class Constant {
   static String apiToken =
       'DTLdcFLx12g5MIGu7deMJIJQTD56qcZx'; // Replace with your API Token (Get from Admin panel)
 
-  static String appName = "DTLive";
+  static String appName = "AT Player";
+  static const String defaultGoogleWebClientId =
+      "946063364931-709266s19taopeuqpb2k16e72b5aar4h.apps.googleusercontent.com";
   static String appPackageName =
       "com.example.yourappname"; // This is used for PIP channel
   static String appleAppId = ""; // This is used for Appstore iOS App redirect

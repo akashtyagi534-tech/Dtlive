@@ -97,6 +97,12 @@
         </li>
 
         <p class="partition"><span>{{__('label.content')}}</span></p>
+        <li class="side_line {{ request()->routeIs('admin.quicklink*') ? 'active' : '' }}">
+            <a href="{{ route('admin.quicklink.index') }}">
+                <i class="fa-solid fa-link fa-xl menu-icon"></i>
+                <span>Quick Add Link</span>
+            </a>
+        </li>
         <?php $type = Get_Type_List(); ?>
         @foreach($type as $value)
 

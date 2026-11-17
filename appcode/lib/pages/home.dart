@@ -44,6 +44,7 @@ import '../widget/ai_section_widget.dart';
 import '../widget/content_section_widget.dart';
 import '../widget/genre_language_section_widget.dart';
 import '../widget/shorts_section_widget.dart';
+import '../widget/add_link_sheet.dart';
 
 class Home extends StatefulWidget {
   final String? pageName;
@@ -504,6 +505,41 @@ class HomeState extends State<Home> {
       ),
       title: _buildAppBarSubscribeBtn(),
       actions: [
+        Container(
+          alignment: Alignment.center,
+          margin: const EdgeInsets.only(right: 10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => showAddLinkSheet(context),
+            child: Container(
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: colorPrimary.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: colorPrimary.withValues(alpha: 0.7),
+                  width: 1,
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_link_rounded, color: colorPrimary, size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    "Add Link",
+                    style: TextStyle(
+                      color: colorPrimary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
         Container(
           alignment: Alignment.centerLeft,
           margin: const EdgeInsets.only(right: 15),

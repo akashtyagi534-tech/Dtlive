@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_locales/flutter_locales.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -471,9 +472,13 @@ class LoginSocialState extends State<LoginSocial> {
   /* Google Login */
   Future<void> _initGoogleSignIn() async {
     try {
+      final effectiveClientId =
+          (webServerClientId != null && webServerClientId!.trim().isNotEmpty)
+          ? webServerClientId!.trim()
+          : Constant.defaultGoogleWebClientId;
       await googleSignIn.initialize(
-        clientId: Platform.isIOS ? null : webServerClientId,
-        serverClientId: Platform.isIOS ? null : webServerClientId,
+        clientId: (Platform.isIOS || kIsWeb) ? effectiveClientId : null,
+        serverClientId: Platform.isIOS ? null : effectiveClientId,
       );
       initialized = true;
     } catch (e) {
@@ -484,52 +489,98 @@ class LoginSocialState extends State<LoginSocial> {
   }
 
   Future<void> _gmailLogin() async {
+    String? loginEmail;
+    String? loginName;
+    String? loginPhoto;
+
     try {
-      if (!initialized) {
-        await _initGoogleSignIn();
+      if (webServerClientId == null || webServerClientId!.trim().isEmpty) {
+        webServerClientId =
+            await sharedPre.read(Constant.googleClientIdKey) ??
+            Constant.defaultGoogleWebClientId;
       }
-      GoogleSignInAccount? googleUser = await googleSignIn.authenticate(
-        scopeHint: ['email', 'profile'],
-      );
-      if (googleUser.authentication.idToken == null) return;
 
-      GoogleSignInAccount user = googleUser;
+      bool nativeSucceeded = false;
+      try {
+        if (!initialized) {
+          await _initGoogleSignIn();
+        }
+        if (initialized) {
+          GoogleSignInAccount? googleUser = await googleSignIn.authenticate(
+            scopeHint: ['email', 'profile'],
+          );
+          final GoogleSignInAuthentication googleAuth =
+              googleUser.authentication;
+          if (googleAuth.idToken != null) {
+            if (!mounted) return;
+            LoadingOverlay().show(context);
 
-      printLog('_gmailLogin ===> id : ${user.id}');
-      printLog('_gmailLogin ===> email : ${user.email}');
-      printLog('_gmailLogin ===> displayName : ${user.displayName}');
-      printLog('_gmailLogin ===> photoUrl : ${user.photoUrl}');
+            final AuthCredential credential = GoogleAuthProvider.credential(
+              idToken: googleAuth.idToken,
+            );
+            final UserCredential userCredential = await _auth
+                .signInWithCredential(credential);
+
+            loginEmail = userCredential.user?.email ?? googleUser.email;
+            loginName =
+                userCredential.user?.displayName ?? googleUser.displayName;
+            loginPhoto =
+                userCredential.user?.photoURL ?? googleUser.photoUrl;
+            nativeSucceeded = (loginEmail != null && loginEmail.isNotEmpty);
+          }
+        }
+      } catch (nativeErr) {
+        printLog(
+          '_gmailLogin Native GoogleSignIn fallback triggered ===> $nativeErr',
+        );
+      }
+
+      // Fallback via Firebase OAuth (Chrome Custom Tabs) when SHA-1/CredentialManager fails
+      if (!nativeSucceeded) {
+        if (!mounted) return;
+        LoadingOverlay().show(context);
+        final googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        final UserCredential webCred = await _auth.signInWithProvider(
+          googleProvider,
+        );
+        loginEmail = webCred.user?.email;
+        loginName = webCred.user?.displayName;
+        loginPhoto = webCred.user?.photoURL;
+      }
+
+      if (loginEmail == null || loginEmail.isEmpty) {
+        if (!mounted) return;
+        LoadingOverlay().hide();
+        Utils.showSnackbar(
+          context,
+          "fail",
+          "Google login cancelled or email unavailable.",
+          false,
+        );
+        return;
+      }
 
       if (!mounted) return;
       LoadingOverlay().show(context);
 
-      UserCredential userCredential;
-      final GoogleSignInAuthentication googleAuth = user.authentication;
-      final AuthCredential credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-      );
+      if (loginPhoto != null && loginPhoto.isNotEmpty) {
+        try {
+          mProfileImg = await Utils.saveImageInStorage(loginPhoto);
+        } catch (imgErr) {
+          printLog("_gmailLogin saveImageInStorage ignored: $imgErr");
+        }
+      }
 
-      userCredential = await _auth.signInWithCredential(credential);
-      assert(await userCredential.user?.getIdToken() != null);
-      printLog("_gmailLogin UserName ======> ${user.displayName}");
-      printLog("_gmailLogin UserEmail =====> ${user.email}");
-      printLog("_gmailLogin UserPhotoUrl ==> ${user.photoUrl}");
-      String firebasedid = userCredential.user?.uid ?? "";
-      printLog('_gmailLogin firebasedid ===> $firebasedid');
-
-      /* Save PhotoUrl in File */
-      mProfileImg = await Utils.saveImageInStorage(user.photoUrl ?? "");
-      printLog('_gmailLogin mProfileImg ===> $mProfileImg');
-
-      /* Hide overlay before showing referral dialog */
       LoadingOverlay().hide();
       if (!mounted) return;
       final referralCode = await Utils.showReferralDialog(context);
       if (!mounted) return;
       LoadingOverlay().show(context);
       checkAndNavigate(
-        user.email,
-        user.displayName ?? "",
+        loginEmail,
+        loginName ?? "",
         "2",
         referenceCode: referralCode,
       );
@@ -538,10 +589,22 @@ class LoginSocialState extends State<LoginSocial> {
       printLog('_gmailLogin Firebase Error =======> ${e.message.toString()}');
       if (!mounted) return;
       LoadingOverlay().hide();
+      Utils.showSnackbar(
+        context,
+        "fail",
+        e.message ?? "Google sign-in failed (${e.code}).",
+        false,
+      );
     } on Exception catch (e) {
       printLog('_gmailLogin Exception ==> $e');
       if (!mounted) return;
       LoadingOverlay().hide();
+      Utils.showSnackbar(
+        context,
+        "fail",
+        "Google sign-in failed. Please try again.",
+        false,
+      );
     }
   }
 

@@ -87,20 +87,21 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-apks/arm64-v8a dist-apks/armeabi-v7a
-          cp appcode/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist-apks/arm64-v8a/DTLive-arm64-v8a-release.apk
-          cp appcode/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist-apks/armeabi-v7a/DTLive-armeabi-v7a-release.apk
+          cp appcode/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist-apks/arm64-v8a/AT-Player-arm64-v8a-release.apk
+          cp appcode/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist-apks/armeabi-v7a/AT-Player-armeabi-v7a-release.apk
           ls -lh dist-apks/*/*.apk
+          keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | grep -E "SHA1|SHA256" || true
 
       - name: Upload APK 1 (arm64-v8a - 64-bit Phones)
         uses: actions/upload-artifact@v4
         with:
-          name: DTLive-arm64-v8a-apk
-          path: dist-apks/arm64-v8a/DTLive-arm64-v8a-release.apk
+          name: AT-Player-arm64-v8a-apk
+          path: dist-apks/arm64-v8a/AT-Player-arm64-v8a-release.apk
           retention-days: 30
 
       - name: Upload APK 2 (armeabi-v7a - 32-bit Phones & TV)
         uses: actions/upload-artifact@v4
         with:
-          name: DTLive-armeabi-v7a-apk
-          path: dist-apks/armeabi-v7a/DTLive-armeabi-v7a-release.apk
+          name: AT-Player-armeabi-v7a-apk
+          path: dist-apks/armeabi-v7a/AT-Player-armeabi-v7a-release.apk
           retention-days: 30

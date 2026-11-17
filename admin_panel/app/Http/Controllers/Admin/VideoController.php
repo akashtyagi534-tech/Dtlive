@@ -1106,4 +1106,70 @@ class VideoController extends Controller
             return response()->json(['status' => 400, 'errors' => $e->getMessage()]);
         }
     }
+
+    public function quickLinkForm()
+    {
+        $categories = Category::where('status', 1)->orderBy('sort_order', 'asc')->get();
+        $recentVideos = Video::where('status', 1)->orderBy('id', 'desc')->take(12)->get();
+        return view('admin.video.quick_link', [
+            'categories'   => $categories,
+            'recentVideos' => $recentVideos,
+        ]);
+    }
+
+    public function quickLinkImport(Request $request)
+    {
+        try {
+            $rawLinks = trim((string) ($request->input('links') ?? ''));
+            if ($rawLinks === '') {
+                return response()->json(['status' => 400, 'errors' => ['Please paste at least one video link.']]);
+            }
+
+            $customTitle = trim((string) ($request->input('title') ?? ''));
+            $categoryId  = (int) ($request->input('category_id') ?? 0);
+            $alsoShorts  = (bool) $request->input('also_shorts', true);
+
+            $extractor = new \App\Services\LinkVideoExtractor();
+            $urls = $extractor->parseUrls($rawLinks);
+            if (empty($urls)) {
+                return response()->json(['status' => 400, 'errors' => ['No valid HTTP/HTTPS URLs found.']]);
+            }
+
+            $urls = array_slice($urls, 0, 25);
+            $imported = [];
+            $failed   = [];
+
+            foreach ($urls as $url) {
+                $titleForItem = (count($urls) === 1 && $customTitle !== '') ? $customTitle : null;
+                $res = $extractor->importLinkToLibrary($url, $titleForItem, $categoryId > 0 ? $categoryId : null, $alsoShorts);
+                if (!empty($res['success']) && !empty($res['video'])) {
+                    $imported[] = [
+                        'id'        => $res['video']->id,
+                        'name'      => $res['video']->name,
+                        'thumbnail' => $res['video']->thumbnail,
+                        'video_url' => $res['video']->video_320,
+                    ];
+                } else {
+                    $failed[] = [
+                        'url'   => $url,
+                        'error' => $res['error'] ?? 'Extraction failed',
+                    ];
+                }
+            }
+
+            if (empty($imported)) {
+                return response()->json(['status' => 400, 'errors' => array_column($failed, 'error')]);
+            }
+
+            return response()->json([
+                'status'   => 200,
+                'success'  => count($imported) . ' video(s) imported successfully!',
+                'imported' => $imported,
+                'failed'   => $failed,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['status' => 400, 'errors' => [$e->getMessage()]]);
+        }
+    }
 }
+
