@@ -1685,10 +1685,14 @@ class ApiService {
 
   /* ========================== Wallet ========================== */
 
-  // add_video_by_link API (Quick Link Import: Single or Multiple links)
+  // add_video_by_link API (Quick Link Import: Single or Sequential Multi-Part Series)
   Future<Map<String, dynamic>> addVideoByLink({
     required String links,
     String? title,
+    String mode = 'single',
+    String? seriesTitle,
+    int showId = 0,
+    int partNumber = 1,
     int categoryId = 0,
     bool alsoShorts = true,
   }) async {
@@ -1705,7 +1709,12 @@ class ApiService {
         ),
         data: {
           'links': links,
+          'mode': mode,
           if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+          if (seriesTitle != null && seriesTitle.trim().isNotEmpty)
+            'series_title': seriesTitle.trim(),
+          if (showId > 0) 'show_id': showId,
+          'part_number': partNumber,
           if (categoryId > 0) 'category_id': categoryId,
           'also_shorts': alsoShorts ? 1 : 0,
         },

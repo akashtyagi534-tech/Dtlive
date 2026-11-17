@@ -3345,10 +3345,10 @@ class HomeController extends Controller
             $more_page = false;
 
             $show_data = TVShow::where('id', $show_id)->first();
-            $data = TVShow_Video::where('season_id', $season_id)->where('show_id', $show_id)->where('status', 1)->orderBy('sort_order', 'asc');
+            $data = TVShow_Video::where('season_id', $season_id)->where('show_id', $show_id)->where('status', 1)->orderBy('sort_order', 'asc')->orderBy('id', 'asc');
 
             $total_rows = $data->count();
-            $total_page = $this->page_limit;
+            $total_page = max((int) ($this->page_limit ?: 20), 100);
             $page_size = ceil($total_rows / $total_page);
             $offset = $page_no * $total_page - $total_page;
 
@@ -3356,7 +3356,7 @@ class HomeController extends Controller
             $pagination = $this->common->pagination_array($total_rows, $page_size, $page_no, $more_page);
 
             $data->take($total_page)->offset($offset);
-            $data = $data->latest()->get();
+            $data = $data->get();
 
             if (count($data) > 0) {
 
@@ -4214,6 +4214,10 @@ class HomeController extends Controller
             }
 
             $customTitle = trim((string) ($request->input('title') ?? ''));
+            $seriesTitle = trim((string) ($request->input('series_title') ?? $customTitle));
+            $mode        = strtolower(trim((string) ($request->input('mode') ?? 'single')));
+            $showId      = max(0, (int) ($request->input('show_id') ?? 0));
+            $partStart   = max(1, (int) ($request->input('part_number') ?? 1));
             $categoryId  = (int) ($request->input('category_id') ?? 0);
             $alsoShorts  = (int) ($request->input('also_shorts') ?? 1) === 1;
 
@@ -4223,9 +4227,60 @@ class HomeController extends Controller
                 return $this->common->API_Response(400, 'No valid HTTP/HTTPS links found. Please check your link.');
             }
 
-            $urls = array_slice($urls, 0, 20);
+            $urls = array_slice($urls, 0, 100);
             $imported = [];
             $failed   = [];
+            $showObj  = null;
+            $seasonId = 0;
+            $allEpisodes = [];
+
+            if ($mode === 'series') {
+                foreach ($urls as $idx => $url) {
+                    $partNum = $partStart + $idx;
+                    $res = $extractor->importSeriesPartToLibrary(
+                        $url,
+                        $seriesTitle,
+                        $showId,
+                        $partNum,
+                        $categoryId > 0 ? $categoryId : null,
+                        (count($urls) === 1 && $customTitle !== '' && $showId > 0) ? $customTitle : null
+                    );
+                    if (!empty($res['success']) && !empty($res['episode'])) {
+                        $showId      = (int) $res['show_id'];
+                        $seasonId    = (int) $res['season_id'];
+                        $showObj     = $res['show'];
+                        $allEpisodes = $res['episodes'];
+                        $imported[]  = $res['episode'];
+                    } else {
+                        $failed[] = [
+                            'part'  => $partNum,
+                            'url'   => $url,
+                            'error' => $res['error'] ?? 'Could not extract video from link.',
+                        ];
+                    }
+                }
+
+                if (empty($imported)) {
+                    $firstErr = $failed[0]['error'] ?? 'Failed to import series part.';
+                    return $this->common->API_Response(400, $firstErr);
+                }
+
+                return response()->json([
+                    'status'       => 200,
+                    'mode'         => 'series',
+                    'show_id'      => $showId,
+                    'season_id'    => $seasonId,
+                    'show'         => $showObj,
+                    'message'      => count($imported) === 1
+                        ? ('Part ' . $partStart . ' added to series!')
+                        : (count($imported) . ' parts added sequentially to series!'),
+                    'added_count'  => count($imported),
+                    'failed_count' => count($failed),
+                    'failed'       => $failed,
+                    'result'       => $imported,
+                    'episodes'     => $allEpisodes,
+                ]);
+            }
 
             foreach ($urls as $idx => $url) {
                 $titleForItem = (count($urls) === 1 && $customTitle !== '') ? $customTitle : null;
@@ -4247,6 +4302,7 @@ class HomeController extends Controller
 
             return response()->json([
                 'status'       => 200,
+                'mode'         => 'single',
                 'message'      => count($imported) . ' video(s) added successfully!',
                 'added_count'  => count($imported),
                 'failed_count' => count($failed),

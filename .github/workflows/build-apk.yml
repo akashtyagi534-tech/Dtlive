@@ -81,6 +81,12 @@ jobs:
         working-directory: appcode
         run: flutter pub get
 
+      - name: Cache Android Signing Keystore (Consistent Updates)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: atplayer-debug-keystore-v1
+
       - name: Build 2 Split APKs (arm64-v8a & armeabi-v7a)
         working-directory: appcode
         run: |

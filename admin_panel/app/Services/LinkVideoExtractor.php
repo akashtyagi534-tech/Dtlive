@@ -8,10 +8,14 @@ use App\Models\Channel;
 use App\Models\Common;
 use App\Models\Home_Section;
 use App\Models\Language;
+use App\Models\Season;
 use App\Models\Shorts;
+use App\Models\TVShow;
+use App\Models\TVShow_Video;
 use App\Models\Type;
 use App\Models\Video;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class LinkVideoExtractor
 {
@@ -233,6 +237,7 @@ class LinkVideoExtractor
      */
     public function importLinkToLibrary(string $url, ?string $customTitle = null, ?int $categoryId = null, bool $alsoShorts = true): array
     {
+        $this->ensureVideoColumnsText();
         $resolved = $this->resolveLink($url);
         if (empty($resolved['success'])) {
             return $resolved;
@@ -376,6 +381,211 @@ class LinkVideoExtractor
     }
 
     /**
+     * Import one link as a numbered part inside a Multi-Part Series (tbl_tv_show + tbl_tv_show_video).
+     * Creates a new show when $showId <= 0, or appends Part N sequentially to the existing $showId.
+     */
+    public function importSeriesPartToLibrary(
+        string $url,
+        string $seriesTitle = '',
+        int $showId = 0,
+        int $partNumber = 1,
+        ?int $categoryId = null,
+        ?string $partTitle = null
+    ): array {
+        $this->ensureVideoColumnsText();
+
+        $resolved = $this->resolveLink($url);
+        if (empty($resolved['success'])) {
+            return $resolved;
+        }
+
+        // Ensure Types (TVShow = 2)
+        $showsType = Type::where('type', 2)->where('status', 1)->first();
+        if (!$showsType) {
+            $showsType = Type::where('type', 2)->first();
+        }
+        $showsTypeId = $showsType ? (int) $showsType->id : 2;
+
+        // Category fallback
+        if (!$categoryId || $categoryId <= 0) {
+            $cat = Category::where('status', 1)->orderBy('sort_order', 'asc')->first();
+            $categoryId = $cat ? (int) $cat->id : 1;
+        }
+
+        // Language fallback
+        $lang = Language::where('status', 1)->orderBy('sort_order', 'asc')->first();
+        $languageId = $lang ? (string) $lang->id : '1';
+
+        // Channel fallback
+        $channel = Channel::where('status', 1)->first();
+        $channelId = $channel ? (int) $channel->id : 0;
+
+        // Ensure Season 1 exists
+        $season = Season::where('status', 1)->orderBy('sort_order', 'asc')->orderBy('id', 'asc')->first();
+        if (!$season) {
+            $season = new Season();
+            $season->name       = 'Season 1';
+            $season->sort_order = 1;
+            $season->status     = 1;
+            $season->save();
+        }
+
+        $thumbFile = $this->downloadThumbnailToContent($resolved['thumbnail_url'] ?? '');
+        $landscapeFile = $thumbFile;
+        $videoUrl = $resolved['video_url'];
+        $partNumber = max(1, $partNumber);
+
+        // Find or create TVShow container
+        $show = $showId > 0 ? TVShow::find($showId) : null;
+        if (!$show) {
+            $resolvedSeriesName = trim($seriesTitle) !== ''
+                ? $this->cleanTitle($seriesTitle, 180)
+                : $this->cleanTitle($resolved['title'] ?: ('AT Series ' . date('M d H:i')), 180);
+
+            $show = new TVShow();
+            $show->type_id              = $showsTypeId;
+            $show->video_type           = 2;
+            $show->channel_id           = $channelId;
+            $show->producer_id          = 0;
+            $show->category_id          = (string) $categoryId;
+            $show->language_id          = $languageId;
+            $show->cast_id              = '';
+            $show->name                 = $resolvedSeriesName;
+            $show->storage_type         = 1;
+            $show->thumbnail            = $thumbFile;
+            $show->landscape            = $landscapeFile;
+            $show->trailer_storage_type = 1;
+            $show->trailer_type         = $resolved['trailer_type'] ?? 'external';
+            $show->trailer_url          = $resolved['trailer_url'] ?? $videoUrl;
+            $show->description          = $resolved['description'] ?: ('Multi-Part Series: ' . $resolvedSeriesName);
+            $show->release_date         = date('Y-m-d');
+            $show->is_title             = 1;
+            $show->is_comment           = 1;
+            $show->is_like              = 1;
+            $show->is_rent              = 0;
+            $show->price                = 0;
+            $show->rent_day             = 0;
+            $show->avg_rating           = 4.8;
+            $show->total_review         = 1;
+            $show->total_view           = 1;
+            $show->total_like           = 1;
+            $show->status               = 1;
+            $show->save();
+        } elseif ($show->thumbnail === 'action_poster.jpg' && $thumbFile !== 'action_poster.jpg') {
+            $show->thumbnail = $thumbFile;
+            $show->landscape = $landscapeFile;
+            $show->save();
+        }
+
+        // Build clean Part label: "Part 1 — Title" or "Part 1"
+        $partTitleClean = trim((string) ($partTitle ?? ''));
+        if ($partTitleClean === '') {
+            $rawResTitle = trim((string) ($resolved['title'] ?? ''));
+            if ($rawResTitle !== '' && mb_strtolower($rawResTitle) !== mb_strtolower($show->name)) {
+                $partTitleClean = 'Part ' . $partNumber . ' - ' . $this->cleanTitle($rawResTitle, 140);
+            } else {
+                $partTitleClean = 'Part ' . $partNumber;
+            }
+        }
+
+        $ep = TVShow_Video::where('show_id', $show->id)
+            ->where('video_320', $videoUrl)
+            ->first();
+
+        if ($ep) {
+            $ep->name = $partTitleClean;
+            $ep->sort_order = $partNumber;
+            if ($thumbFile !== 'action_poster.jpg') {
+                $ep->thumbnail = $thumbFile;
+                $ep->landscape = $landscapeFile;
+            }
+            $ep->status = 1;
+            $ep->save();
+        } else {
+            $ep = new TVShow_Video();
+            $ep->show_id               = (int) $show->id;
+            $ep->season_id             = (int) $season->id;
+            $ep->name                  = $partTitleClean;
+            $ep->storage_type          = 1;
+            $ep->thumbnail             = $thumbFile;
+            $ep->landscape             = $landscapeFile;
+            $ep->description           = $resolved['description'] ?? ('Part ' . $partNumber);
+            $ep->video_storage_type    = 1;
+            $ep->video_upload_type     = $resolved['video_upload_type'] ?? 'external';
+            $ep->video_320             = $videoUrl;
+            $ep->video_480             = $videoUrl;
+            $ep->video_720             = $videoUrl;
+            $ep->video_1080            = $videoUrl;
+            $ep->video_extension       = $resolved['video_extension'] ?? 'mp4';
+            $ep->video_duration        = 60000;
+            $ep->subtitle_storage_type = 1;
+            $ep->subtitle_type         = 'external';
+            $ep->subtitle_lang_1       = '';
+            $ep->subtitle_1            = '';
+            $ep->subtitle_lang_2       = '';
+            $ep->subtitle_2            = '';
+            $ep->subtitle_lang_3       = '';
+            $ep->subtitle_3            = '';
+            $ep->is_premium            = 0;
+            $ep->is_title              = 1;
+            $ep->is_download           = 0;
+            $ep->total_view            = 1;
+            $ep->sort_order            = $partNumber;
+            $ep->status                = 1;
+            $ep->save();
+        }
+
+        $this->ensureLatestSeriesHomeSection($showsTypeId);
+
+        $showCopy = clone $show;
+        $this->common->add_url_to_array(2, [$showCopy]);
+
+        $epCopy = clone $ep;
+        $this->common->add_url_to_array(3, [$epCopy]);
+
+        $allEpisodes = TVShow_Video::where('show_id', $show->id)
+            ->where('status', 1)
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('id', 'asc')
+            ->get();
+        $this->common->add_url_to_array(3, $allEpisodes);
+        foreach ($allEpisodes as $item) {
+            $item['is_buy']   = 0;
+            $item['is_rent']  = 0;
+            $item['rent_buy'] = 0;
+            $item['stop_time'] = 0;
+        }
+
+        return [
+            'success'   => true,
+            'show_id'   => (int) $show->id,
+            'season_id' => (int) $season->id,
+            'show'      => $showCopy,
+            'episode'   => $epCopy,
+            'episodes'  => $allEpisodes,
+        ];
+    }
+
+    /**
+     * Widen video URL columns from varchar(255) to TEXT once so signed CDN links (Moj/Reels) never truncate.
+     */
+    private function ensureVideoColumnsText(): void
+    {
+        static $checked = false;
+        if ($checked) {
+            return;
+        }
+        $checked = true;
+        try {
+            $conn = Schema::getConnection();
+            $conn->statement("ALTER TABLE tbl_tv_show_video MODIFY video_320 TEXT NOT NULL, MODIFY video_480 TEXT NOT NULL, MODIFY video_720 TEXT NOT NULL, MODIFY video_1080 TEXT NOT NULL");
+            $conn->statement("ALTER TABLE tbl_video MODIFY video_320 TEXT NOT NULL, MODIFY video_480 TEXT NOT NULL, MODIFY video_720 TEXT NOT NULL, MODIFY video_1080 TEXT NOT NULL");
+        } catch (\Throwable $e) {
+            // Safe to ignore if already TEXT or lacks ALTER privilege
+        }
+    }
+
+    /**
      * Ensure a dynamic section ordered by latest uploads sits at the top of Home Screen.
      */
     public function ensureLatestHomeSection(int $moviesTypeId): void
@@ -395,6 +605,43 @@ class LinkVideoExtractor
                 'type_id'         => $moviesTypeId,
                 'title'           => 'Latest Added Links',
                 'short_title'     => 'Recently Imported Videos',
+                'screen_layout'   => 'portrait',
+                'content_ids'     => '',
+                'category_id'     => 0,
+                'language_id'     => 0,
+                'channel_id'      => 0,
+                'order_by_upload' => 2,
+                'order_by_view'   => 0,
+                'premium_video'   => 0,
+                'no_of_content'   => 20,
+                'view_all'        => 1,
+                'is_title'        => 1,
+                'sort_order'      => 0,
+                'status'          => 1,
+            ]);
+        }
+    }
+
+    /**
+     * Ensure Multi-Part Series (video_type = 2) show up prominently on Home Screen.
+     */
+    public function ensureLatestSeriesHomeSection(int $showsTypeId): void
+    {
+        $exists = Home_Section::where('is_home_screen', 1)
+            ->where('video_type', 2)
+            ->where('section_type', 0)
+            ->where('order_by_upload', 2)
+            ->first();
+
+        if (!$exists) {
+            DB::table('tbl_home_section')->insert([
+                'section_type'    => 0,
+                'is_home_screen'  => 1,
+                'video_type'      => 2,
+                'sub_video_type'  => 0,
+                'type_id'         => $showsTypeId,
+                'title'           => 'Multi-Part Series & Parts',
+                'short_title'     => 'Watch Part 1, 2, 3... In Sequence',
                 'screen_layout'   => 'portrait',
                 'content_ids'     => '',
                 'category_id'     => 0,

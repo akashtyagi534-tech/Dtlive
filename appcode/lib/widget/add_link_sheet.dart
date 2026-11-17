@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../model/episodebyseasonmodel.dart' as episodes;
 import '../model/playermodel.dart';
 import '../provider/homeprovider.dart';
 import '../provider/sectiondataprovider.dart';
@@ -36,6 +37,14 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
 
   bool _isLoading = false;
   bool _alsoShorts = true;
+  bool _isSeriesMode = false;
+  bool _userToggledMode = false;
+
+  int _uploadCurrent = 0;
+  int _uploadTotal = 0;
+  int _importedShowId = 0;
+  String _uploadStatusText = "";
+
   String? _errorMessage;
   String? _successMessage;
   List<Map<String, dynamic>> _importedVideos = [];
@@ -47,6 +56,43 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
     super.dispose();
   }
 
+  List<String> _parseUrls(String rawInput) {
+    final normalized = rawInput
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .replaceAll(',', '\n');
+    final parts = normalized.split(RegExp(r'[\s\n]+'));
+    final List<String> urls = [];
+    final Set<String> seen = {};
+    final domainRegex = RegExp(r'^[a-z0-9.-]+\.[a-z]{2,}(/.*)?$', caseSensitive: false);
+
+    for (final raw in parts) {
+      var u = raw.trim().replaceAll(RegExp('^["\'<>]+|["\'<>]+\$'), '');
+      if (u.isEmpty) continue;
+      if (!RegExp(r'^https?://', caseSensitive: false).hasMatch(u)) {
+        if (domainRegex.hasMatch(u)) {
+          u = 'https://$u';
+        } else {
+          continue;
+        }
+      }
+      final uri = Uri.tryParse(u);
+      if (uri != null && uri.host.isNotEmpty && !seen.contains(u)) {
+        seen.add(u);
+        urls.add(u);
+      }
+    }
+    return urls;
+  }
+
+  void _onLinksChanged(String value) {
+    final detected = _parseUrls(value);
+    if (!_userToggledMode) {
+      _isSeriesMode = detected.length > 1;
+    }
+    setState(() {});
+  }
+
   Future<void> _pasteFromClipboard() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -54,15 +100,16 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
       if (text.isEmpty) {
         if (!mounted) return;
         setState(() {
-          _errorMessage = "Clipboard khali hai — pehle koi video link copy karein.";
+          _errorMessage =
+              "Clipboard khali hai — pehle koi video link copy karein.";
         });
         return;
       }
       final existing = _linksController.text.trim();
-      setState(() {
-        _errorMessage = null;
-        _linksController.text = existing.isEmpty ? text : "$existing\n$text";
-      });
+      final combined = existing.isEmpty ? text : "$existing\n$text";
+      _linksController.text = combined;
+      _errorMessage = null;
+      _onLinksChanged(combined);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -72,43 +119,88 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
   }
 
   Future<void> _importLinks() async {
-    final rawLinks = _linksController.text.trim();
-    if (rawLinks.isEmpty) {
+    final urls = _parseUrls(_linksController.text.trim());
+    if (urls.isEmpty) {
       setState(() {
-        _errorMessage = "Kripya kam se kam ek video link paste karein.";
+        _errorMessage = "Kripya kam se kam ek valid video link paste karein.";
         _successMessage = null;
       });
       return;
     }
 
     FocusScope.of(context).unfocus();
+    final bool useSeriesMode = _isSeriesMode;
+    final String titleInput = _titleController.text.trim();
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
       _successMessage = null;
       _importedVideos = [];
+      _importedShowId = 0;
+      _uploadCurrent = 0;
+      _uploadTotal = urls.length;
+      _uploadStatusText = useSeriesMode
+          ? "Starting Part 1 / ${urls.length}..."
+          : "Starting Video 1 / ${urls.length}...";
     });
 
-    final res = await ApiService().addVideoByLink(
-      links: rawLinks,
-      title: _titleController.text.trim(),
-      alsoShorts: _alsoShorts,
-    );
+    final List<Map<String, dynamic>> collected = [];
+    final List<String> failedNotes = [];
+    int showId = 0;
+
+    for (int i = 0; i < urls.length; i++) {
+      if (!mounted) return;
+      final int partNum = i + 1;
+      setState(() {
+        _uploadCurrent = partNum;
+        _uploadStatusText = useSeriesMode
+            ? "Uploading Part $partNum / ${urls.length}..."
+            : "Uploading Video $partNum / ${urls.length}...";
+      });
+
+      final res = await ApiService().addVideoByLink(
+        links: urls[i],
+        title: titleInput,
+        mode: useSeriesMode ? 'series' : 'single',
+        seriesTitle: titleInput,
+        showId: showId,
+        partNumber: partNum,
+        alsoShorts: _alsoShorts,
+      );
+
+      if (!mounted) return;
+      final status = int.tryParse(res['status']?.toString() ?? '400') ?? 400;
+      if (status == 200) {
+        final returnedShowId =
+            int.tryParse(res['show_id']?.toString() ?? '0') ?? 0;
+        if (returnedShowId > 0) {
+          showId = returnedShowId;
+        }
+        final rawList = res['result'];
+        if (rawList is List) {
+          for (final item in rawList) {
+            if (item is Map) {
+              collected.add(Map<String, dynamic>.from(item));
+            }
+          }
+        }
+        setState(() {
+          _importedShowId = showId;
+          _importedVideos = List<Map<String, dynamic>>.from(collected);
+        });
+      } else {
+        final errText =
+            res['message']?.toString() ??
+            res['errors']?.toString() ??
+            "Extract failed";
+        failedNotes.add("Part $partNum: $errText");
+      }
+    }
 
     if (!mounted) return;
 
-    final status = int.tryParse(res['status']?.toString() ?? '400') ?? 400;
-    if (status == 200) {
-      final rawList = res['result'];
-      final List<Map<String, dynamic>> parsed = [];
-      if (rawList is List) {
-        for (final item in rawList) {
-          if (item is Map) {
-            parsed.add(Map<String, dynamic>.from(item));
-          }
-        }
-      }
-
+    if (collected.isNotEmpty) {
       // Refresh Home feed sections & banners immediately
       try {
         final homeProvider = Provider.of<HomeProvider>(
@@ -132,28 +224,89 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _importedVideos = parsed;
-        _successMessage =
-            res['message']?.toString() ??
-            "${parsed.length} video(s) AT Player me add ho gaye!";
+        _importedShowId = showId;
+        _importedVideos = collected;
+        _uploadStatusText = "";
+        _successMessage = useSeriesMode
+            ? "${collected.length} / ${urls.length} Parts 1-by-1 add ho gaye! Ab Part 1 se lagaatar chalega."
+            : "${collected.length} / ${urls.length} video(s) AT Player me add ho gaye!";
+        if (failedNotes.isNotEmpty) {
+          _errorMessage =
+              "${failedNotes.length} link skip hua: ${failedNotes.first}";
+        }
       });
     } else {
       setState(() {
         _isLoading = false;
-        _errorMessage =
-            res['message']?.toString() ??
-            res['errors']?.toString() ??
-            "Link se video extract nahi ho paya.";
+        _uploadStatusText = "";
+        _errorMessage = failedNotes.isNotEmpty
+            ? failedNotes.first
+            : "Link se video extract nahi ho paya.";
       });
     }
   }
 
-  Future<void> _watchVideo(Map<String, dynamic> video) async {
-    final int videoId = int.tryParse(video['id']?.toString() ?? '0') ?? 0;
-    final int videoType =
-        int.tryParse(video['video_type']?.toString() ?? '1') ?? 1;
+  episodes.Result _mapToEpisodeResult(Map<String, dynamic> m, int fallbackIdx) {
+    int toInt(dynamic v, [int def = 0]) =>
+        int.tryParse(v?.toString() ?? '') ?? def;
+    return episodes.Result(
+      id: toInt(m['id']),
+      showId: toInt(m['show_id'], _importedShowId),
+      seasonId: toInt(m['season_id'], 1),
+      name: (m['name'] ?? 'Part ${fallbackIdx + 1}').toString(),
+      thumbnail: (m['thumbnail'] ?? '').toString(),
+      landscape: (m['landscape'] ?? m['thumbnail'] ?? '').toString(),
+      description: (m['description'] ?? '').toString(),
+      videoUploadType: (m['video_upload_type'] ?? 'external').toString(),
+      video320: (m['video_320'] ?? '').toString(),
+      video480: (m['video_480'] ?? m['video_320'] ?? '').toString(),
+      video720: (m['video_720'] ?? m['video_320'] ?? '').toString(),
+      video1080: (m['video_1080'] ?? m['video_320'] ?? '').toString(),
+      videoExtension: (m['video_extension'] ?? 'mp4').toString(),
+      videoDuration: toInt(m['video_duration'], 60000),
+      stopTime: 0,
+      subtitleType: (m['subtitle_type'] ?? 'external').toString(),
+      subtitleLang1: (m['subtitle_lang_1'] ?? '').toString(),
+      subtitle1: (m['subtitle_1'] ?? '').toString(),
+      subtitleLang2: (m['subtitle_lang_2'] ?? '').toString(),
+      subtitle2: (m['subtitle_2'] ?? '').toString(),
+      subtitleLang3: (m['subtitle_lang_3'] ?? '').toString(),
+      subtitle3: (m['subtitle_3'] ?? '').toString(),
+      isPremium: 0,
+      isTitle: 1,
+      isDownload: 0,
+      totalView: toInt(m['total_view'], 1),
+      sortable: fallbackIdx + 1,
+      status: 1,
+      isBuy: 0,
+      isRent: 0,
+      rentBuy: 0,
+    );
+  }
+
+  Future<void> _watchFromIndex(int index) async {
+    if (index < 0 || index >= _importedVideos.length) return;
+    final video = _importedVideos[index];
+
+    final bool asSeries = _isSeriesMode && _importedVideos.length > 1;
+    final List<episodes.Result>? epList = asSeries
+        ? List.generate(
+            _importedVideos.length,
+            (i) => _mapToEpisodeResult(_importedVideos[i], i),
+          )
+        : null;
+
+    final int videoId = asSeries && _importedShowId > 0
+        ? _importedShowId
+        : (int.tryParse(video['id']?.toString() ?? '0') ?? 0);
+    final int episodeId = asSeries
+        ? (int.tryParse(video['id']?.toString() ?? '0') ?? 0)
+        : 0;
+    final int videoType = asSeries
+        ? 2
+        : (int.tryParse(video['video_type']?.toString() ?? '1') ?? 1);
     final int typeId = int.tryParse(video['type_id']?.toString() ?? '1') ?? 1;
-    final String videoTitle = (video['name'] ?? 'Imported Video').toString();
+    final String videoTitle = (video['name'] ?? 'Part ${index + 1}').toString();
     final String video320 = (video['video_320'] ?? '').toString();
     final String video480 = (video['video_480'] ?? video320).toString();
     final String video720 = (video['video_720'] ?? video320).toString();
@@ -179,14 +332,14 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
     );
 
     final playerModel = PlayerModel(
-      playType: "Video",
+      playType: asSeries ? "Show" : "Video",
       isLive: false,
       videoId: videoId,
       videoTitle: videoTitle,
       videoType: videoType,
       subVideoType: 0,
       typeId: typeId,
-      episodeId: 0,
+      episodeId: episodeId,
       stopTime: 0,
       isPremium: 0,
       isBuy: 0,
@@ -198,8 +351,8 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
       videoThumb: thumbUrl,
       securityKey: "",
       securityIVKey: null,
-      currentEpiPos: 0,
-      episodeList: null,
+      currentEpiPos: index,
+      episodeList: epList,
       cipherMediaDetails: null,
     );
 
@@ -215,6 +368,8 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final detectedUrls = _parseUrls(_linksController.text);
+
     return Padding(
       padding: EdgeInsets.fromLTRB(18, 16, 18, bottomInset + 20),
       child: SingleChildScrollView(
@@ -253,7 +408,7 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Add Video by Link",
+                        "Add Video / 30+ Parts by Link",
                         style: TextStyle(
                           color: titleTextColor,
                           fontSize: 17,
@@ -262,7 +417,7 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                       ),
                       SizedBox(height: 2),
                       Text(
-                        "Moj, YouTube, Reels, Vimeo, MP4 / M3U8 — ek ya multiple links dalen",
+                        "Moj, YouTube, Reels, MP4 — 1 ya 30 part links paste karein",
                         style: TextStyle(
                           color: descTextColor,
                           fontSize: 12,
@@ -277,18 +432,20 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
             // Links input + Paste / Clear actions
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  "Video Link(s)",
+                Text(
+                  detectedUrls.isEmpty
+                      ? "Video Link(s)"
+                      : "${detectedUrls.length} Link(s) Ready",
                   style: TextStyle(
-                    color: titleTextColor,
+                    color: detectedUrls.isEmpty ? titleTextColor : colorPrimary,
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 Row(
@@ -301,6 +458,8 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                                 setState(() {
                                   _linksController.clear();
                                   _errorMessage = null;
+                                  _userToggledMode = false;
+                                  _isSeriesMode = false;
                                 });
                               },
                         icon: const Icon(
@@ -343,13 +502,13 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
             const SizedBox(height: 8),
             TextField(
               controller: _linksController,
-              maxLines: 4,
+              maxLines: 5,
               minLines: 2,
               style: const TextStyle(color: white, fontSize: 13),
-              onChanged: (_) => setState(() {}),
+              onChanged: _onLinksChanged,
               decoration: InputDecoration(
                 hintText:
-                    "https://mojapp.in/@user/video/...\nYa ek ke niche ek multiple links paste karein",
+                    "Part 1 link\nPart 2 link\n...\nPart 30 link (1 ke baad 1 upload aur chalega)",
                 hintStyle: TextStyle(
                   color: descTextColor.withValues(alpha: 0.6),
                   fontSize: 12,
@@ -373,12 +532,14 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
             ),
             const SizedBox(height: 12),
 
-            // Optional title
+            // Optional title / Series title
             TextField(
               controller: _titleController,
               style: const TextStyle(color: white, fontSize: 13),
               decoration: InputDecoration(
-                hintText: "Optional Video Title (single link ke liye)",
+                hintText: _isSeriesMode
+                    ? "Series Name (e.g. Comedy Part 1-30)"
+                    : "Optional Video Title (single link ke liye)",
                 hintStyle: TextStyle(
                   color: descTextColor.withValues(alpha: 0.6),
                   fontSize: 12,
@@ -403,31 +564,51 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                 ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
 
-            // Also show in Shorts toggle
+            // Multi-Part Series Mode Toggle
             InkWell(
               onTap: _isLoading
                   ? null
-                  : () => setState(() => _alsoShorts = !_alsoShorts),
+                  : () => setState(() {
+                      _userToggledMode = true;
+                      _isSeriesMode = !_isSeriesMode;
+                    }),
               borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _isSeriesMode
+                      ? colorPrimary.withValues(alpha: 0.10)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: _isSeriesMode
+                        ? colorPrimary.withValues(alpha: 0.45)
+                        : Colors.transparent,
+                  ),
+                ),
                 child: Row(
                   children: [
                     Checkbox(
-                      value: _alsoShorts,
+                      value: _isSeriesMode,
                       activeColor: colorPrimary,
                       checkColor: black,
                       onChanged: _isLoading
                           ? null
-                          : (val) =>
-                              setState(() => _alsoShorts = val ?? true),
+                          : (val) => setState(() {
+                              _userToggledMode = true;
+                              _isSeriesMode = val ?? false;
+                            }),
                     ),
                     const Expanded(
                       child: Text(
-                        "Clips / Shorts section me bhi add karein (Moj/Reels)",
-                        style: TextStyle(color: descTextColor, fontSize: 12.5),
+                        "Multi-Part Series Mode (1 ke baad 1 upload & Part-by-Part chalega)",
+                        style: TextStyle(
+                          color: titleTextColor,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -435,8 +616,89 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
               ),
             ),
 
+            // Also show in Shorts toggle (when single videos)
+            if (!_isSeriesMode)
+              InkWell(
+                onTap: _isLoading
+                    ? null
+                    : () => setState(() => _alsoShorts = !_alsoShorts),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: _alsoShorts,
+                        activeColor: colorPrimary,
+                        checkColor: black,
+                        onChanged: _isLoading
+                            ? null
+                            : (val) =>
+                                setState(() => _alsoShorts = val ?? true),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          "Clips / Shorts section me bhi add karein (Moj/Reels)",
+                          style: TextStyle(color: descTextColor, fontSize: 12.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            if (_isLoading && _uploadTotal > 0) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: appBgColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: colorPrimary.withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _uploadStatusText,
+                          style: const TextStyle(
+                            color: colorPrimary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          "$_uploadCurrent / $_uploadTotal",
+                          style: const TextStyle(
+                            color: titleTextColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: _uploadTotal > 0
+                            ? (_uploadCurrent / _uploadTotal).clamp(0.0, 1.0)
+                            : null,
+                        minHeight: 7,
+                        color: colorPrimary,
+                        backgroundColor: grayDark,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             if (_errorMessage != null) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
@@ -485,84 +747,113 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                         ),
                       ],
                     ),
-                    if (_importedVideos.isNotEmpty) ...[
+                    if (_isSeriesMode && _importedVideos.length > 1) ...[
                       const SizedBox(height: 10),
-                      ..._importedVideos.take(3).map((v) {
-                        final thumb =
-                            (v['landscape'] ?? v['thumbnail'] ?? '').toString();
-                        final vTitle =
-                            (v['name'] ?? 'Imported Video').toString();
-                        return Container(
-                          margin: const EdgeInsets.only(top: 6),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: appBgColor.withValues(alpha: 0.7),
-                            borderRadius: BorderRadius.circular(10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _watchFromIndex(0),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: colorPrimary,
+                            foregroundColor: black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
-                          child: Row(
-                            children: [
-                              if (thumb.isNotEmpty)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.network(
-                                    thumb,
-                                    width: 56,
-                                    height: 38,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => Container(
-                                      width: 56,
-                                      height: 38,
-                                      color: grayDark,
-                                      child: const Icon(
-                                        Icons.play_arrow_rounded,
-                                        color: white,
+                          icon: const Icon(Icons.playlist_play_rounded),
+                          label: Text(
+                            "Watch Part 1 -> All ${_importedVideos.length} Parts",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_importedVideos.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _importedVideos.length,
+                          itemBuilder: (_, idx) {
+                            final v = _importedVideos[idx];
+                            final thumb =
+                                (v['landscape'] ?? v['thumbnail'] ?? '')
+                                    .toString();
+                            final vTitle =
+                                (v['name'] ?? 'Part ${idx + 1}').toString();
+                            return Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: appBgColor.withValues(alpha: 0.7),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  if (thumb.isNotEmpty)
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.network(
+                                        thumb,
+                                        width: 50,
+                                        height: 36,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          width: 50,
+                                          height: 36,
+                                          color: grayDark,
+                                          child: const Icon(
+                                            Icons.play_arrow_rounded,
+                                            color: white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      vTitle,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: titleTextColor,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ),
-                                ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  vTitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: titleTextColor,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
+                                  const SizedBox(width: 8),
+                                  ElevatedButton(
+                                    onPressed: () => _watchFromIndex(idx),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: colorPrimary,
+                                      foregroundColor: black,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      "Play",
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                onPressed: () => _watchVideo(v),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: colorPrimary,
-                                  foregroundColor: black,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.play_arrow_rounded,
-                                  size: 16,
-                                ),
-                                label: const Text(
-                                  "Watch Now",
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
+                            );
+                          },
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -594,10 +885,14 @@ class _AddLinkSheetContentState extends State<_AddLinkSheetContent> {
                     : const Icon(Icons.cloud_upload_rounded, size: 20),
                 label: Text(
                   _isLoading
-                      ? "Extracting & Adding Video..."
-                      : "Import & Add to ${Constant.appName}",
+                      ? (_uploadTotal > 1
+                            ? "Uploading $_uploadCurrent / $_uploadTotal..."
+                            : "Extracting & Adding Video...")
+                      : (_isSeriesMode && detectedUrls.length > 1
+                            ? "Upload ${detectedUrls.length} Parts (1-by-1) to ${Constant.appName}"
+                            : "Import & Add to ${Constant.appName}"),
                   style: const TextStyle(
-                    fontSize: 14.5,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

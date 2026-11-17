@@ -1126,6 +1126,10 @@ class VideoController extends Controller
             }
 
             $customTitle = trim((string) ($request->input('title') ?? ''));
+            $seriesTitle = trim((string) ($request->input('series_title') ?? $customTitle));
+            $mode        = strtolower(trim((string) ($request->input('mode') ?? 'single')));
+            $showId      = max(0, (int) ($request->input('show_id') ?? 0));
+            $partStart   = max(1, (int) ($request->input('part_number') ?? 1));
             $categoryId  = (int) ($request->input('category_id') ?? 0);
             $alsoShorts  = (bool) $request->input('also_shorts', true);
 
@@ -1135,9 +1139,52 @@ class VideoController extends Controller
                 return response()->json(['status' => 400, 'errors' => ['No valid HTTP/HTTPS URLs found.']]);
             }
 
-            $urls = array_slice($urls, 0, 25);
+            $urls = array_slice($urls, 0, 100);
             $imported = [];
             $failed   = [];
+
+            if ($mode === 'series') {
+                foreach ($urls as $idx => $url) {
+                    $partNum = $partStart + $idx;
+                    $res = $extractor->importSeriesPartToLibrary(
+                        $url,
+                        $seriesTitle,
+                        $showId,
+                        $partNum,
+                        $categoryId > 0 ? $categoryId : null
+                    );
+                    if (!empty($res['success']) && !empty($res['episode'])) {
+                        $showId = (int) $res['show_id'];
+                        $imported[] = [
+                            'id'        => $res['episode']->id,
+                            'show_id'   => $showId,
+                            'part'      => $partNum,
+                            'name'      => $res['episode']->name,
+                            'thumbnail' => $res['episode']->thumbnail,
+                            'video_url' => $res['episode']->video_320,
+                        ];
+                    } else {
+                        $failed[] = [
+                            'part'  => $partNum,
+                            'url'   => $url,
+                            'error' => $res['error'] ?? 'Extraction failed',
+                        ];
+                    }
+                }
+
+                if (empty($imported)) {
+                    return response()->json(['status' => 400, 'errors' => array_column($failed, 'error')]);
+                }
+
+                return response()->json([
+                    'status'   => 200,
+                    'mode'     => 'series',
+                    'show_id'  => $showId,
+                    'success'  => count($imported) . ' part(s) imported successfully!',
+                    'imported' => $imported,
+                    'failed'   => $failed,
+                ]);
+            }
 
             foreach ($urls as $url) {
                 $titleForItem = (count($urls) === 1 && $customTitle !== '') ? $customTitle : null;
@@ -1163,6 +1210,7 @@ class VideoController extends Controller
 
             return response()->json([
                 'status'   => 200,
+                'mode'     => 'single',
                 'success'  => count($imported) . ' video(s) imported successfully!',
                 'imported' => $imported,
                 'failed'   => $failed,

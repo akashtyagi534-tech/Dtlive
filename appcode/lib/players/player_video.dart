@@ -20,6 +20,8 @@ import 'package:flutter_locales/flutter_locales.dart';
 import '../main.dart';
 import '../web_js/js_helper.dart';
 import '../players/orientationmanager.dart';
+import '../players/player_vimeo.dart';
+import '../players/player_youtube.dart';
 import '../provider/connectivityprovider.dart';
 import '../provider/playerprovider.dart';
 import '../routes/routes_constant.dart';
@@ -119,6 +121,7 @@ class _PlayerVideoState extends State<PlayerVideo>
   static const int safeStartDelayMs = 3000;
 
   bool _hasShownNextEpisodePopup = false;
+  bool _isAutoAdvancing = false;
   int _initialPositionMs = 0;
   double _popupOpacity = 1.0;
   double _countdownProgress = 1.0; // 1.0 = full bar, 0.0 = empty
@@ -676,6 +679,23 @@ class _PlayerVideoState extends State<PlayerVideo>
     final durMs = _videoPlayerController.value.duration.inMilliseconds;
     playerCPosition = posMs;
     videoTotalDuration = durMs;
+
+    // Auto-advance cleanly if part reached the end naturally
+    if (_videoPlayerController.value.isInitialized &&
+        durMs > 0 &&
+        posMs >= durMs - 200 &&
+        !_videoPlayerController.value.isPlaying &&
+        !_isAutoAdvancing &&
+        (widget.playerModel.episodeList?.length ?? 0) > 1) {
+      final nextIdx = (widget.playerModel.currentEpiPos ?? 0) + 1;
+      if (nextIdx < widget.playerModel.episodeList!.length) {
+        _isAutoAdvancing = true;
+        _countdownTimer?.cancel();
+        _playNextEpisode();
+        return;
+      }
+    }
+
     // Throttle: run expensive checks only every 500ms of playback change
     if ((posMs - _lastListenerPositionMs).abs() < 500) return;
     _lastListenerPositionMs = posMs;
@@ -866,21 +886,42 @@ class _PlayerVideoState extends State<PlayerVideo>
     }
     /* VdoCipher OTP */
 
+    final epUrl = ep.video320 ?? "";
+    final rawUploadType =
+        (ep.videoUploadType ?? widget.playerModel.uploadType ?? "").trim();
+    final lowerUrl = epUrl.toLowerCase();
+    final lowerUpload = rawUploadType.toLowerCase();
+
+    Utils.setQualityURLs(
+      video320: epUrl,
+      video480: (ep.video480 != null && ep.video480!.isNotEmpty)
+          ? ep.video480!
+          : epUrl,
+      video720: (ep.video720 != null && ep.video720!.isNotEmpty)
+          ? ep.video720!
+          : epUrl,
+      video1080: (ep.video1080 != null && ep.video1080!.isNotEmpty)
+          ? ep.video1080!
+          : epUrl,
+    );
+
     final playerModel = PlayerModel(
       playType: widget.playerModel.playType,
       isLive: false,
       videoId: widget.playerModel.videoId ?? 0,
-      videoTitle: widget.playerModel.videoTitle ?? "",
+      videoTitle: (ep.name != null && ep.name!.isNotEmpty)
+          ? ep.name
+          : (widget.playerModel.videoTitle ?? ""),
       videoType: widget.playerModel.videoType ?? 0,
-      subVideoType: 0,
+      subVideoType: widget.playerModel.subVideoType ?? 0,
       typeId: widget.playerModel.typeId ?? 0,
       episodeId: ep.id ?? 0,
-      videoUrl: ep.video320 ?? "",
+      videoUrl: epUrl,
       cipherMediaDetails: (vdocipherDetails?.result != null)
           ? vdocipherDetails!.result
           : null,
       trailerUrl: widget.playerModel.trailerUrl ?? "",
-      uploadType: widget.playerModel.uploadType ?? "",
+      uploadType: rawUploadType.isNotEmpty ? rawUploadType : "external",
       videoThumb: ep.landscape ?? "",
       stopTime: 0, // [FIX] FIX-2: always 0 for any new episode jump
       isPremium: widget.playerModel.isPremium ?? 0,
@@ -898,6 +939,30 @@ class _PlayerVideoState extends State<PlayerVideo>
       context.pushReplacement(
         "/${RoutesConstant.playerPage}",
         extra: playerModel,
+      );
+    } else if (lowerUpload == "youtube" ||
+        lowerUrl.contains("youtube.com") ||
+        lowerUrl.contains("youtu.be")) {
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              PlayerYoutube(playerModel: playerModel),
+          transitionsBuilder: (context, anim, secondaryAnim, child) =>
+              FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
+      );
+    } else if (lowerUpload == "vimeo" || lowerUrl.contains("vimeo.com")) {
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              PlayerVimeo(playerModel: playerModel),
+          transitionsBuilder: (context, anim, secondaryAnim, child) =>
+              FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
       );
     } else {
       // [NEW] FEATURE-7: FadeTransition instead of MaterialPageRoute
@@ -1139,21 +1204,32 @@ class _PlayerVideoState extends State<PlayerVideo>
 
   void _checkNextEpisodeTrigger(int posMs, int durMs) {
     if (!_videoPlayerController.value.isInitialized) return;
-    if (widget.playerModel.episodeList == null ||
-        (widget.playerModel.episodeList?.length ?? 0) == 0) {
+    final list = widget.playerModel.episodeList;
+    if (list == null || list.isEmpty) {
       return;
     }
+    final nextIdx = (widget.playerModel.currentEpiPos ?? 0) + 1;
+    if (nextIdx >= list.length) return;
     if (!_videoPlayerController.value.isPlaying) return;
     if (_hasShownNextEpisodePopup) return;
     if (durMs <= 0 || posMs <= 0) return;
 
+    final int triggerThresholdMs;
+    if (durMs <= 20000) {
+      triggerThresholdMs = (durMs * 0.25).round().clamp(1500, 5000);
+    } else if (durMs <= 90000) {
+      triggerThresholdMs = 5000;
+    } else {
+      triggerThresholdMs = nextEpisodeThresholdMs;
+    }
+
     int remainingMs = durMs - posMs;
-    if (remainingMs <= nextEpisodeThresholdMs && remainingMs > 0) {
-      if (_initialPositionMs >= (durMs - nextEpisodeThresholdMs)) {
+    if (remainingMs <= triggerThresholdMs && remainingMs > 0) {
+      if (_initialPositionMs >= (durMs - triggerThresholdMs)) {
         if (posMs - _initialPositionMs < safeStartDelayMs) return;
       }
-      int remainingSec = (remainingMs / 1000).floor();
-      _countdownSeconds = remainingSec < 5 ? remainingSec : 5;
+      int remainingSec = (remainingMs / 1000).ceil().clamp(1, 5);
+      _countdownSeconds = remainingSec;
       if (!mounted) return;
       _showNextEpisodePopup = true;
       _hasShownNextEpisodePopup = true;

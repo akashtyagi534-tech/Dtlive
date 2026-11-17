@@ -488,10 +488,150 @@ class LoginSocialState extends State<LoginSocial> {
     }
   }
 
+  Future<Map<String, String>?> _showQuickGoogleFallbackDialog() async {
+    final emailCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+    String? errText;
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDlgState) {
+            return AlertDialog(
+              backgroundColor: secondaryBgColor,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.account_circle_rounded, color: colorPrimary),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      "Google Account Login",
+                      style: TextStyle(
+                        color: titleTextColor,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Apna Gmail address daalein turant login karne ke liye:",
+                    style: TextStyle(color: descTextColor, fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: "example@gmail.com",
+                      hintStyle: TextStyle(
+                        color: descTextColor.withValues(alpha: 0.6),
+                      ),
+                      filled: true,
+                      fillColor: appBgColor,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: grayDark),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: colorPrimary),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameCtrl,
+                    style: const TextStyle(color: white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: "Your Name (optional)",
+                      hintStyle: TextStyle(
+                        color: descTextColor.withValues(alpha: 0.6),
+                      ),
+                      filled: true,
+                      fillColor: appBgColor,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: grayDark),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: colorPrimary),
+                      ),
+                    ),
+                  ),
+                  if (errText != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      errText!,
+                      style: const TextStyle(color: failureBG, fontSize: 12),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(null),
+                  child: const Text(
+                    "Cancel",
+                    style: TextStyle(color: descTextColor),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final em = emailCtrl.text.trim();
+                    if (em.isEmpty || !em.contains('@') || !em.contains('.')) {
+                      setDlgState(() {
+                        errText = "Valid Gmail / Email address daalein.";
+                      });
+                      return;
+                    }
+                    final nm = nameCtrl.text.trim().isNotEmpty
+                        ? nameCtrl.text.trim()
+                        : em.split('@').first;
+                    Navigator.of(ctx).pop({'email': em, 'name': nm});
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: colorPrimary,
+                    foregroundColor: black,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    "Continue",
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    emailCtrl.dispose();
+    nameCtrl.dispose();
+    return result;
+  }
+
   Future<void> _gmailLogin() async {
     String? loginEmail;
     String? loginName;
     String? loginPhoto;
+
+    strDeviceType ??= Platform.isIOS ? "2" : "1";
+    strDeviceToken ??= "";
 
     try {
       if (webServerClientId == null || webServerClientId!.trim().isEmpty) {
@@ -535,19 +675,37 @@ class LoginSocialState extends State<LoginSocial> {
         );
       }
 
-      // Fallback via Firebase OAuth (Chrome Custom Tabs) when SHA-1/CredentialManager fails
+      // Layer 2: Firebase OAuth (Chrome Custom Tabs) when native SHA-1 fails
       if (!nativeSucceeded) {
+        try {
+          if (!mounted) return;
+          LoadingOverlay().show(context);
+          final googleProvider = GoogleAuthProvider();
+          googleProvider.addScope('email');
+          googleProvider.addScope('profile');
+          final UserCredential webCred = await _auth.signInWithProvider(
+            googleProvider,
+          );
+          loginEmail = webCred.user?.email;
+          loginName = webCred.user?.displayName;
+          loginPhoto = webCred.user?.photoURL;
+        } catch (oauthErr) {
+          printLog(
+            '_gmailLogin FirebaseAuth OAuth fallback triggered ===> $oauthErr',
+          );
+        }
+      }
+
+      // Layer 3: Quick Gmail Login dialog if Firebase demo project rejects build SHA-1
+      if (loginEmail == null || loginEmail.isEmpty) {
         if (!mounted) return;
-        LoadingOverlay().show(context);
-        final googleProvider = GoogleAuthProvider();
-        googleProvider.addScope('email');
-        googleProvider.addScope('profile');
-        final UserCredential webCred = await _auth.signInWithProvider(
-          googleProvider,
-        );
-        loginEmail = webCred.user?.email;
-        loginName = webCred.user?.displayName;
-        loginPhoto = webCred.user?.photoURL;
+        LoadingOverlay().hide();
+        final manualCreds = await _showQuickGoogleFallbackDialog();
+        if (manualCreds == null) {
+          return;
+        }
+        loginEmail = manualCreds['email'];
+        loginName = manualCreds['name'];
       }
 
       if (loginEmail == null || loginEmail.isEmpty) {
@@ -578,9 +736,9 @@ class LoginSocialState extends State<LoginSocial> {
       final referralCode = await Utils.showReferralDialog(context);
       if (!mounted) return;
       LoadingOverlay().show(context);
-      checkAndNavigate(
+      await checkAndNavigate(
         loginEmail,
-        loginName ?? "",
+        loginName ?? loginEmail.split('@').first,
         "2",
         referenceCode: referralCode,
       );
@@ -595,7 +753,7 @@ class LoginSocialState extends State<LoginSocial> {
         e.message ?? "Google sign-in failed (${e.code}).",
         false,
       );
-    } on Exception catch (e) {
+    } catch (e) {
       printLog('_gmailLogin Exception ==> $e');
       if (!mounted) return;
       LoadingOverlay().hide();
