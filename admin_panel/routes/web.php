@@ -11,11 +11,18 @@
 |
 */
 
+use App\Http\Controllers\ApkDownloadController;
 use App\Http\Controllers\Admin\PageController;
 use App\Http\Controllers\Api\ShareController;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
+
+// Direct AT Player APK Downloads (no ZIP extraction required)
+Route::get('download', [ApkDownloadController::class, 'page'])->name('apk.download.page');
+Route::match(['GET', 'HEAD'], 'download/{arch}', [ApkDownloadController::class, 'stream'])
+    ->where('arch', 'arm64|armeabi')
+    ->name('apk.download.stream');
 
 // Artisan
 Route::get('clearcache', function () {
