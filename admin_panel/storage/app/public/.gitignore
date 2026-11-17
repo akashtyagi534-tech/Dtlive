@@ -1,3 +1,13 @@
 !.gitignore
 !app/
 !app/*
+!content/
+!content/*
+!category/
+!category/*
+!cast/
+!cast/*
+!channel/
+!channel/*
+!language/
+!language/*

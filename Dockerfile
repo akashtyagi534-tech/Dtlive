@@ -76,5 +76,6 @@ CMD sh -c '\
     rm -rf public/storage && php artisan storage:link || true; \
     php artisan config:clear || true; \
     php /var/www/html/db/auto_init_db.php || true; \
+    php /var/www/html/db/seed_sample_content.php || true; \
     chown -R www-data:www-data storage bootstrap/cache; \
     exec apache2-foreground'
