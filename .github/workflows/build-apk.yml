@@ -18,6 +18,9 @@ on:
       - "appcode/**"
       - ".github/workflows/build-apk.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build-apks:
     name: Build 2 Split APKs (No Universal APK)
@@ -97,6 +100,7 @@ jobs:
         with:
           name: AT-Player-arm64-v8a-apk
           path: dist-apks/arm64-v8a/AT-Player-arm64-v8a-release.apk
+          compression-level: 0
           retention-days: 30
 
       - name: Upload APK 2 (armeabi-v7a - 32-bit Phones & TV)
@@ -104,4 +108,24 @@ jobs:
         with:
           name: AT-Player-armeabi-v7a-apk
           path: dist-apks/armeabi-v7a/AT-Player-armeabi-v7a-release.apk
+          compression-level: 0
           retention-days: 30
+
+      - name: Publish Direct APK Downloads (GitHub Release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="at-player-latest"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              dist-apks/arm64-v8a/AT-Player-arm64-v8a-release.apk \
+              dist-apks/armeabi-v7a/AT-Player-armeabi-v7a-release.apk \
+              --clobber
+          else
+            gh release create "$TAG" \
+              dist-apks/arm64-v8a/AT-Player-arm64-v8a-release.apk \
+              dist-apks/armeabi-v7a/AT-Player-armeabi-v7a-release.apk \
+              --title "AT Player Split APKs (Direct Download)" \
+              --notes "Direct APK install (no ZIP extraction needed): arm64-v8a (64-bit phones) & armeabi-v7a (32-bit phones / TV)"
+          fi
